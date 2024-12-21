@@ -3,7 +3,6 @@ import cv2
 from PIL import Image
 import matplotlib.pyplot as plt
 
-
 def fourier_domain_blending(image1, image2, output_filename="hybrid_merged.png"):
     """
     Blend two images in the Fourier domain and save the resulting hybrid image.
@@ -22,7 +21,6 @@ def fourier_domain_blending(image1, image2, output_filename="hybrid_merged.png")
     fft1_shifted = np.fft.fftshift(fft1)
     fft2_shifted = np.fft.fftshift(fft2)
 
-    
     gaussian = build_gaussian_mask(image1)
 
     gaussian_image = (gaussian * 255).astype(np.uint8)
@@ -56,7 +54,6 @@ def build_gaussian_mask(image1):
     gaussian = gaussian / np.max(gaussian)
     return gaussian
 
-
 def q2():
     img1 = cv2.imread("britney.jpg", cv2.IMREAD_GRAYSCALE)
     img2 = cv2.imread("tarantino.jpg", cv2.IMREAD_GRAYSCALE)
@@ -73,34 +70,47 @@ def q2():
     print("Blended image saved as hybrid_merged.png")
 
 def build_laplacian_pyramid(image, levels):
-        gaussian_pyramid = [image]
-        for _ in range(levels):
-            image = cv2.pyrDown(image)
-            if image.shape[0] % 2 != 0 or image.shape[1] % 2 != 0:
-                image = cv2.resize(image, ((image.shape[1] // 2) * 2, (image.shape[0] // 2) * 2))
-            gaussian_pyramid.append(image)
+    """
+    Create a Laplacian pyramid from an input image.
 
-        laplacian_pyramid = []
-        for i in range(levels, 0, -1):
-            upsampled = cv2.pyrUp(gaussian_pyramid[i])
-            if upsampled.shape != gaussian_pyramid[i - 1].shape:
-                upsampled = cv2.resize(upsampled, (gaussian_pyramid[i - 1].shape[1], gaussian_pyramid[i - 1].shape[0]))
-            laplacian = cv2.subtract(gaussian_pyramid[i - 1], upsampled)
-            laplacian_pyramid.append(laplacian)
+    Args:
+        image (numpy.ndarray): Input image as a NumPy array.
+        levels (int): Number of levels in the pyramid.
 
-        laplacian_pyramid.append(gaussian_pyramid[-1])
-        return laplacian_pyramid
+    Returns:
+        list: A list of NumPy arrays representing the Laplacian pyramid.
+    """
+    # Ensure the image is a floating-point array for precision
+    image = image.astype(np.float32)
+
+    # Create the Gaussian pyramid
+    gaussian_pyramid = [image]
+    for _ in range(levels):
+        image = cv2.pyrDown(image)
+        gaussian_pyramid.append(image)
+
+    # Create the Laplacian pyramid
+    laplacian_pyramid = []
+    for i in range(levels):
+        expanded = cv2.pyrUp(gaussian_pyramid[i + 1], dstsize=gaussian_pyramid[i].shape[:2][::-1])
+        laplacian = cv2.subtract(gaussian_pyramid[i], expanded)
+        laplacian_pyramid.append(laplacian)
+
+    # Add the smallest level of the Gaussian pyramid to the Laplacian pyramid
+    laplacian_pyramid.append(gaussian_pyramid[-1])
+
+    return laplacian_pyramid
 
 def build_gaussian_pyramid(image, levels):
-        gaussian_pyramid = [image]
-        for _ in range(levels):
-            image = cv2.pyrDown(image)
-            if image.shape[0] % 2 != 0 or image.shape[1] % 2 != 0:
-                image = cv2.resize(image, ((image.shape[1] // 2) * 2, (image.shape[0] // 2) * 2))
-            gaussian_pyramid.append(image)
-        return gaussian_pyramid
+    gaussian_pyramid = [image]
+    for _ in range(levels):
+        image = cv2.pyrDown(image)
+        if image.shape[0] % 2 != 0 or image.shape[1] % 2 != 0:
+            image = cv2.resize(image, ((image.shape[1] // 2) * 2, (image.shape[0] // 2) * 2))
+        gaussian_pyramid.append(image)
+    return gaussian_pyramid
 
-def pyramid_blending(image_a, image_b, mask, levels = 4):
+def pyramid_blending(image_a, image_b, mask, levels=4):
     """
     Perform pyramid blending for two images A and B using a binary mask M.
 
@@ -115,15 +125,14 @@ def pyramid_blending(image_a, image_b, mask, levels = 4):
     # Ensure inputs have the same dimensions
     if image_a.shape != image_b.shape or image_a.shape[:2] != mask.shape[:2]:
         raise ValueError("Input images and mask must have the same dimensions.")
-    
 
-    # without converting to float, values will round before streching 
+    # Without converting to float, values will round before stretching
     image_a = image_a.astype(np.float32)
     image_b = image_b.astype(np.float32)
 
     # Convert mask to float if not already
     mask = mask.astype(np.float32) / 255 if mask.max() > 1 else mask.astype(np.float32)
-    
+
     # Build pyramids
     laplacian_a = build_laplacian_pyramid(image_a, levels)
     laplacian_b = build_laplacian_pyramid(image_b, levels)
@@ -142,14 +151,12 @@ def pyramid_blending(image_a, image_b, mask, levels = 4):
         laplacian_c.append(Lc)
 
     # Reconstruct blended image
-    blended_image = laplacian_c[0]
-    for i in range(1, len(laplacian_c)):
-        blended_image = cv2.pyrUp(blended_image)
-        blended_image = cv2.add(blended_image, cv2.resize(laplacian_c[i], (blended_image.shape[0], blended_image.shape[1])))
+    blended_image = laplacian_c[-1]
+    for i in range(len(laplacian_c) - 2, -1, -1):
+        blended_image = cv2.pyrUp(blended_image, dstsize=laplacian_c[i].shape[:2][::-1])
+        blended_image = cv2.add(blended_image, laplacian_c[i])
 
     return np.clip(blended_image, 0, 255).astype(np.uint8)
-
-
 
 def create_binary_half_half_mask(width, height):
     mask = np.zeros((height, width), dtype=np.uint8)
@@ -157,86 +164,51 @@ def create_binary_half_half_mask(width, height):
     return Image.fromarray(mask * 255)
 
 def plot_gaussian_pyramid(image_path, levels=4):
-
     # Load the image
-
     img = cv2.imread(image_path, cv2.IMREAD_GRAYSCALE)
 
     if img is None:
-
         raise FileNotFoundError(f"Image at {image_path} not found.")
-
-
 
     # Build Gaussian Pyramid
-
     gaussian_pyramid = build_gaussian_pyramid(img, levels)
 
-
-
     # Plot Gaussian Pyramid
-
     plt.figure(figsize=(12, 8))
-
     for i, layer in enumerate(gaussian_pyramid):
-
         plt.subplot(1, levels + 1, i + 1)
-
         plt.imshow(layer, cmap='gray')
-
         plt.title(f"Level {i}")
-
         plt.axis('off')
-
     plt.suptitle("Gaussian Pyramid")
-
     plt.show()
 
-
-
 def plot_laplacian_pyramid(image_path, levels=4):
-
     # Load the image
-
     img = cv2.imread(image_path, cv2.IMREAD_GRAYSCALE)
 
     if img is None:
-
         raise FileNotFoundError(f"Image at {image_path} not found.")
 
-
-
     # Build Laplacian Pyramid
-
     laplacian_pyramid = build_laplacian_pyramid(img, levels)
 
-
-
     # Plot Laplacian Pyramid
-
     plt.figure(figsize=(12, 8))
-
     for i, layer in enumerate(laplacian_pyramid):
-
         plt.subplot(1, levels + 1, i + 1)
-
         plt.imshow(layer, cmap='gray')
-
         plt.title(f"Level {i}")
-
         plt.axis('off')
-
     plt.suptitle("Laplacian Pyramid")
-
     plt.show()
-
 
 def q1():
     # Load input images and mask
     img_a = cv2.imread("britney.jpg")
     img_b = cv2.imread("tarantino.jpg")
 
-    mask = create_binary_half_half_mask(img_a.shape[0], img_a.shape[1])
+    mask = create_binary_half_half_mask(img_a.shape[1], img_a.shape[0])
     mask.save("q1_mask.png")
     mask = cv2.imread("q1_mask.png", cv2.IMREAD_GRAYSCALE)
 
@@ -251,26 +223,19 @@ def q1():
     mask = cv2.resize(mask, (img_a.shape[1], img_a.shape[0]))
 
     # Perform pyramid blending
-    blended_result = pyramid_blending(img_a, img_b, mask,6)
+    blended_result = pyramid_blending(img_a, img_b, mask, 4)
 
     # Save the blended image
     filename = "q1_blended_image.png"
     cv2.imwrite(filename, blended_result)
     print(f"Blended image saved as {filename}")
 
-    
 if __name__ == "__main__":
-
     q1()
-
     q2()
 
     try:
-
         plot_gaussian_pyramid("tarantino.jpg")
-
         plot_laplacian_pyramid("tarantino.jpg")
-
     except FileNotFoundError as e:
-
         print(e)

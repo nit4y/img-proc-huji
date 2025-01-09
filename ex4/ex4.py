@@ -36,15 +36,17 @@ def align_images(image1, image2):
     
     # If you want a Homography (3x3 matrix) instead:
     # matrix, inliers = cv2.findHomography(points1_valid, points2_valid, cv2.RANSAC, 5.0)
-    
-    # Warp image2 to align with image1
-    height, width = image1.shape[:2]
-    aligned_image = cv2.warpAffine(image2, matrix, (width, height))
-    
-    return matrix, aligned_image
+        
+    return matrix
+
+
+def to_homogeneous(affine_matrix):
+    """Converts a 3x2 affine matrix to a 3x3 homogeneous matrix."""
+    return np.vstack([affine_matrix, [0, 0, 1]])
+
 
 # Example usage
-if __name__ == "__main__":
+def img_test():
     # Load consecutive frames
     image1 = cv2.imread("tarantino.jpg")
     image2 = cv2.imread("tarantino.jpg")
@@ -61,3 +63,85 @@ if __name__ == "__main__":
     cv2.imshow("Image2 (Aligned)", aligned_image)
     cv2.waitKey(0)
     cv2.destroyAllWindows()
+
+def extract_frames(video_path):
+    """Extracts frames from a video."""
+    cap = cv2.VideoCapture(video_path)
+    frames = []
+    while cap.isOpened():
+        ret, frame = cap.read()
+        if not ret:
+            break
+        frames.append(frame)
+    cap.release()
+    return frames
+
+def calculate_transformations(frames):
+    """Calculates transformations from each frame to the next."""
+    num_frames = len(frames)
+    ref_index = num_frames // 2
+    transformations = [] # Start with an identity matrix for the first frame
+
+    for i in range(1, num_frames):
+        matrix = align_images(frames[i - 1], frames[i])
+        transformations.append(matrix)
+        
+    # calculate cumulative transformations
+    right_transform = np.eye(transformations[0].shape[0])
+    left_transform = np.eye(transformations[0].shape[0])
+    for i in range(ref_index + 1, num_frames-1):
+        right_transform = np.dot(transformations[i], right_transform)
+        transformations[i] = right_transform
+        
+    for i in range(ref_index - 1, -1, -1):
+        left_transform = np.dot(transformations[i], left_transform)
+        transformations[i] = left_transform
+        
+    transformations.insert(ref_index, np.eye(transformations[0].shape[0]))
+    
+    return transformations, ref_index
+
+def calculate_canvas_size(frames, transformations, ref_index):
+    """Calculates the final canvas size."""
+    min_x, min_y = 0, 0
+    max_x, max_y = frames[ref_index].shape[1], frames[ref_index].shape[0]
+
+    for i in range(len(frames)):
+        h, w = frames[i].shape[:2]
+        corners = np.array([[0, 0, 1], [w, 0, 1], [w, h, 1], [0, h, 1]])
+
+        transformed_corners = [np.dot(transformations[i], corner) for corner in corners]
+        transformed_corners = np.array(transformed_corners)
+        min_x = min(min_x, transformed_corners[:, 0].min())
+        min_y = min(min_y, transformed_corners[:, 1].min())
+        max_x = max(max_x, transformed_corners[:, 0].max())
+        max_y = max(max_y, transformed_corners[:, 1].max())
+
+    return int(max_x - min_x), int(max_y - min_y), -int(min_x), -int(min_y)
+
+def stitch_panorama(frames, transformations, canvas_size, ref_index):
+    """Stitches frames into a panoramic mosaic."""
+    canvas = np.zeros((canvas_size[1], canvas_size[0], 3), dtype=np.uint8)
+    offset_x, offset_y = canvas_size[2], canvas_size[3]
+
+    for i, frame in enumerate(frames):
+        transformation = np.linalg.inv(transformations[i])
+        warped_frame = cv2.warpPerspective(frame, transformation, (canvas.shape[1], canvas.shape[0]))
+        mask = (warped_frame.sum(axis=2) > 0).astype(np.uint8)
+        canvas[mask == 1] = warped_frame[mask == 1]
+
+    return canvas
+
+def main(video_path):
+    frames = extract_frames(video_path)
+    transformations, ref_index = calculate_transformations(frames)
+    canvas_size = calculate_canvas_size(frames, transformations, ref_index)
+    panorama = stitch_panorama(frames, transformations, canvas_size, ref_index)
+    
+    cv2.imwrite("panorama.jpg", panorama)
+    cv2.imshow("Panorama", panorama)
+    cv2.waitKey(0)
+    cv2.destroyAllWindows()
+
+if __name__ == "__main__":
+    main("input/boat.mp4")

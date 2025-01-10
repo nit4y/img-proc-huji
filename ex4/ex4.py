@@ -2,7 +2,7 @@ import cv2
 import numpy as np
 import mediapy as media
 
-def align_images(image1, image2):
+def align_images(image1, image2, isHomography = False):
     """
     Aligns image2 to image1 using the Lucas-Kanade optical flow method.
     
@@ -30,14 +30,16 @@ def align_images(image1, image2):
     points1_valid = points1[st == 1]
     points2_valid = points2[st == 1]
     
+    if isHomography:
+        matrix, inliers = cv2.findHomography(points1_valid, points2_valid, cv2.RANSAC, 5.0)
+        return matrix
+    
     # Estimate a transformation matrix (Affine or Homography)
     # For Affine transformation (3x2 matrix):
+    
     matrix, inliers = cv2.estimateAffinePartial2D(points1_valid, points2_valid)
     
-    # If you want a Homography (3x3 matrix) instead:
-    # matrix, inliers = cv2.findHomography(points1_valid, points2_valid, cv2.RANSAC, 5.0)
-        
-    return matrix
+    return to_homogeneous(matrix)
 
 
 def to_homogeneous(affine_matrix):
@@ -80,25 +82,23 @@ def calculate_transformations(frames):
     """Calculates transformations from each frame to the next."""
     num_frames = len(frames)
     ref_index = num_frames // 2
-    transformations = [] # Start with an identity matrix for the first frame
-
-    for i in range(1, num_frames):
-        matrix = align_images(frames[i - 1], frames[i])
-        transformations.append(matrix)
-        
-    # calculate cumulative transformations
-    right_transform = np.eye(transformations[0].shape[0])
-    left_transform = np.eye(transformations[0].shape[0])
-    for i in range(ref_index + 1, num_frames-1):
-        right_transform = np.dot(transformations[i], right_transform)
-        transformations[i] = right_transform
-        
-    for i in range(ref_index - 1, -1, -1):
-        left_transform = np.dot(transformations[i], left_transform)
-        transformations[i] = left_transform
-        
-    transformations.insert(ref_index, np.eye(transformations[0].shape[0]))
+    transformations = [np.eye(3)] # Start with an identity matrix for the first frame
     
+    # calculate cumulative transformations
+    right_transform = transformations[0]
+    left_transform = transformations[0]
+    count = 0
+    for i in range(ref_index, num_frames):
+        right_matrix = align_images(frames[i - 1], frames[i])
+        right_transform = right_transform @ right_matrix
+        transformations.append(right_transform)
+        
+        left_matrix = align_images(frames[ref_index - count], frames[ref_index - count - 1])
+        left_transform = left_matrix @ left_transform
+        # insert left transformation at the beginning of the list
+        transformations.insert(0, left_transform)
+        count+=1
+            
     return transformations, ref_index
 
 def calculate_canvas_size(frames, transformations, ref_index):
@@ -126,6 +126,8 @@ def stitch_panorama(frames, transformations, canvas_size, ref_index):
 
     for i, frame in enumerate(frames):
         transformation = np.linalg.inv(transformations[i])
+        transformation[0, 2] += offset_x
+        transformation[1, 2] += offset_y
         warped_frame = cv2.warpPerspective(frame, transformation, (canvas.shape[1], canvas.shape[0]))
         mask = (warped_frame.sum(axis=2) > 0).astype(np.uint8)
         canvas[mask == 1] = warped_frame[mask == 1]

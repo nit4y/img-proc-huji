@@ -80,26 +80,51 @@ def extract_frames(video_path):
     return frames
 
 def calculate_transformations(frames):
-    """Calculates transformations from each frame to the next."""
+    """Calculates stabilized transformations from each frame to the next."""
     num_frames = len(frames)
     ref_index = num_frames // 2
-    transformations = [np.eye(3)] # Start with an identity matrix for the first frame
-    
-    # calculate cumulative transformations
+    transformations = [np.eye(3)]  # Identity matrix for the first frame
+
+    # Reference transformation to stabilize rotations and Y translations
+    ref_rotation = 0
+    ref_y_translation = 0
+
+    # Calculate right-side transformations
     right_transform = transformations[0]
-    left_transform = transformations[0]
-    count = 0
-    for i in range(ref_index, num_frames):
-        right_matrix = align_images(frames[i - 1], frames[i])
-        right_transform = right_transform @ right_matrix
+    for i in range(ref_index + 1, num_frames):
+        matrix = align_images(frames[i - 1], frames[i])
+
+        # Stabilize rotation
+        angle = np.arctan2(matrix[1, 0], matrix[0, 0])  # Extract rotation angle
+        angle_correction = ref_rotation - angle
+        rotation_matrix = np.array([
+            [np.cos(angle_correction), -np.sin(angle_correction), 0],
+            [np.sin(angle_correction), np.cos(angle_correction), 0],
+            [0, 0, 1]
+        ])
+        matrix = rotation_matrix @ matrix
+
+        right_transform = right_transform @ matrix
         transformations.append(right_transform)
-        
-        left_matrix = align_images(frames[ref_index - count], frames[ref_index - count - 1])
-        left_transform = left_matrix @ left_transform
-        # insert left transformation at the beginning of the list
+
+    # Calculate left-side transformations
+    left_transform = transformations[0]
+    for i in range(ref_index - 1, -1, -1):
+        matrix = align_images(frames[i + 1], frames[i])
+
+        # Stabilize rotation
+        angle = np.arctan2(matrix[1, 0], matrix[0, 0])
+        angle_correction = ref_rotation - angle
+        rotation_matrix = np.array([
+            [np.cos(angle_correction), -np.sin(angle_correction), 0],
+            [np.sin(angle_correction), np.cos(angle_correction), 0],
+            [0, 0, 1]
+        ])
+        matrix = rotation_matrix @ matrix
+
+        left_transform = matrix @ left_transform
         transformations.insert(0, left_transform)
-        count+=1
-            
+
     return transformations, ref_index
 
 def calculate_canvas_size(frames, transformations, ref_index):
@@ -132,7 +157,7 @@ def stitch_panorama(frames, transformations, canvas_size, ref_index):
         transformation[0, 2] += offset_x
         transformation[1, 2] += offset_y
         if i != 0:
-            frame = frame[:, :abs(ceil(prev_trans[0, 2]) - ceil(transformation[0, 2]))]
+            frame = frame[:, :abs(floor(prev_trans[0, 2]) - ceil(transformation[0, 2]))]
         prev_trans = transformation
         warped_frame = cv2.warpPerspective(frame, transformation, (canvas.shape[1], canvas.shape[0]))
         mask = (warped_frame.sum(axis=2) > 0).astype(np.uint8)

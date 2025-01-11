@@ -1,5 +1,6 @@
 import cv2
 import numpy as np
+from math import ceil, floor
 import mediapy as media
 
 def align_images(image1, image2, isHomography = False):
@@ -23,7 +24,7 @@ def align_images(image1, image2, isHomography = False):
     points1 = cv2.goodFeaturesToTrack(gray1, mask=None, **feature_params)
     
     # Calculate optical flow (Lucas-Kanade) to find corresponding points in image2
-    lk_params = dict(winSize=(15, 15), maxLevel=2, criteria=(cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, 10, 0.03))
+    lk_params = dict(winSize=(5, 5), maxLevel=2, criteria=(cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, 10, 0.03))
     points2, st, err = cv2.calcOpticalFlowPyrLK(gray1, gray2, points1, None, **lk_params)
     
     # Select valid points
@@ -123,11 +124,16 @@ def stitch_panorama(frames, transformations, canvas_size, ref_index):
     """Stitches frames into a panoramic mosaic."""
     canvas = np.zeros((canvas_size[1], canvas_size[0], 3), dtype=np.uint8)
     offset_x, offset_y = canvas_size[2], canvas_size[3]
-
+    
+    prev_trans = None
     for i, frame in enumerate(frames):
+        
         transformation = np.linalg.inv(transformations[i])
         transformation[0, 2] += offset_x
         transformation[1, 2] += offset_y
+        if i != 0:
+            frame = frame[:, :abs(ceil(prev_trans[0, 2]) - ceil(transformation[0, 2]))]
+        prev_trans = transformation
         warped_frame = cv2.warpPerspective(frame, transformation, (canvas.shape[1], canvas.shape[0]))
         mask = (warped_frame.sum(axis=2) > 0).astype(np.uint8)
         canvas[mask == 1] = warped_frame[mask == 1]
@@ -141,7 +147,7 @@ def main(video_path):
     panorama = stitch_panorama(frames, transformations, canvas_size, ref_index)
     
     cv2.imwrite("panorama.jpg", panorama)
-    cv2.imshow("Panorama", panorama)
+    # cv2.imshow("Panorama", panorama)
     cv2.waitKey(0)
     cv2.destroyAllWindows()
 

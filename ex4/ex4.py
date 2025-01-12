@@ -3,6 +3,21 @@ import numpy as np
 from math import ceil, floor
 import mediapy as media
 
+
+def stabilize_horizontal_motion(matrix):
+    """
+    Removes rotations and vertical translations, keeping only horizontal motion.
+    """
+    # Zero out rotation components
+    matrix[0, 1] = 0  # Remove rotation
+    matrix[1, 0] = 0  # Remove rotation
+
+    # Zero out Y-axis translation
+    # matrix[1, 2] = 0  # Remove vertical translation
+
+    return matrix
+
+
 def align_images(image1, image2, isHomography = False):
     """
     Aligns image2 to image1 using the Lucas-Kanade optical flow method.
@@ -40,7 +55,9 @@ def align_images(image1, image2, isHomography = False):
     
     matrix, inliers = cv2.estimateAffinePartial2D(points1_valid, points2_valid)
     
-    return to_homogeneous(matrix)
+    matrix =  to_homogeneous(matrix)
+    
+    return stabilize_horizontal_motion(matrix)
 
 
 def to_homogeneous(affine_matrix):
@@ -93,17 +110,6 @@ def calculate_transformations(frames):
     right_transform = transformations[0]
     for i in range(ref_index + 1, num_frames):
         matrix = align_images(frames[i - 1], frames[i])
-
-        # Stabilize rotation
-        angle = np.arctan2(matrix[1, 0], matrix[0, 0])  # Extract rotation angle
-        angle_correction = ref_rotation - angle
-        rotation_matrix = np.array([
-            [np.cos(angle_correction), -np.sin(angle_correction), 0],
-            [np.sin(angle_correction), np.cos(angle_correction), 0],
-            [0, 0, 1]
-        ])
-        matrix = rotation_matrix @ matrix
-
         right_transform = right_transform @ matrix
         transformations.append(right_transform)
 
@@ -111,17 +117,6 @@ def calculate_transformations(frames):
     left_transform = transformations[0]
     for i in range(ref_index - 1, -1, -1):
         matrix = align_images(frames[i + 1], frames[i])
-
-        # Stabilize rotation
-        angle = np.arctan2(matrix[1, 0], matrix[0, 0])
-        angle_correction = ref_rotation - angle
-        rotation_matrix = np.array([
-            [np.cos(angle_correction), -np.sin(angle_correction), 0],
-            [np.sin(angle_correction), np.cos(angle_correction), 0],
-            [0, 0, 1]
-        ])
-        matrix = rotation_matrix @ matrix
-
         left_transform = matrix @ left_transform
         transformations.insert(0, left_transform)
 

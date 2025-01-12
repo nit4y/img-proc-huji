@@ -46,10 +46,7 @@ def align_images(image1, image2):
     points1_valid = points1[st == 1]
     points2_valid = points2[st == 1]
     
-    # Estimate a transformation matrix (Affine or Homography)
-    # For Affine transformation (3x2 matrix):
-    
-    matrix, inliers = cv2.estimateAffinePartial2D(points1_valid, points2_valid)
+    matrix, inliers = cv2.estimateAffinePartial2D(points1_valid, points2_valid, method=cv2.RANSAC)
     
     matrix =  to_homogeneous(matrix)
     
@@ -59,26 +56,6 @@ def align_images(image1, image2):
 def to_homogeneous(affine_matrix):
     """Converts a 3x2 affine matrix to a 3x3 homogeneous matrix."""
     return np.vstack([affine_matrix, [0, 0, 1]])
-
-
-# Example usage
-def img_test():
-    # Load consecutive frames
-    image1 = cv2.imread("tarantino.jpg")
-    image2 = cv2.imread("tarantino.jpg")
-    
-    # Align images
-    transformation_matrix, aligned_image = align_images(image1, image2)
-    
-    # Display results
-    print("Transformation Matrix:")
-    print(transformation_matrix)
-    
-    cv2.imshow("Image1 (Reference)", image1)
-    cv2.imshow("Image2 (Original)", image2)
-    cv2.imshow("Image2 (Aligned)", aligned_image)
-    cv2.waitKey(0)
-    cv2.destroyAllWindows()
 
 def extract_frames(video_path):
     """Extracts frames from a video."""
@@ -180,7 +157,7 @@ def main(video_path):
     frames = extract_frames(video_path)
     transformations, ref_index = calculate_transformations(frames)
     canvas_size = calculate_canvas_size(frames, transformations, ref_index)
-    panorama = stitch_panorama(frames, transformations, canvas_size, ref_index)
+    panorama = stitch_panorama(frames, transformations, canvas_size, ref_index, 0)
     
     cv2.imwrite("panorama.jpg", panorama)
     # cv2.imshow("Panorama", panorama)

@@ -140,25 +140,54 @@ def calculate_canvas_size(frames, transformations, ref_index):
 
     return int(max_x - min_x), int(max_y - min_y), -int(min_x), -int(min_y)
 
-def stitch_panorama(frames, transformations, canvas_size, ref_index):
+import numpy as np
+import cv2
+from math import floor, ceil
+
+def stitch_panorama(frames, transformations, canvas_size, frame_x_offset=0):
     """Stitches frames into a panoramic mosaic."""
     canvas = np.zeros((canvas_size[1], canvas_size[0], 3), dtype=np.uint8)
     offset_x, offset_y = canvas_size[2], canvas_size[3]
-    
-    prev_trans = None
+
+    prev_leftmost_x = 0
+    prev_warped_frame = []
+
     for i, frame in enumerate(frames):
-        
+        # Apply the transformation for the current frame
         transformation = np.linalg.inv(transformations[i])
         transformation[0, 2] += offset_x
         transformation[1, 2] += offset_y
-        if i != 0:
-            frame = frame[:, :abs(floor(prev_trans[0, 2]) - ceil(transformation[0, 2]))]
-        prev_trans = transformation
+        
+        # Warp the frame to the canvas
         warped_frame = cv2.warpPerspective(frame, transformation, (canvas.shape[1], canvas.shape[0]))
-        mask = (warped_frame.sum(axis=2) > 0).astype(np.uint8)
-        canvas[mask == 1] = warped_frame[mask == 1]
+
+        # Initialize curr_leftmost_x for the first frame
+        curr_leftmost_x = 0
+
+        # Find the leftmost non-black pixel in the current warped frame
+        non_black_pixels = np.where(warped_frame.sum(axis=2) > 0)
+        if non_black_pixels[1].size > 0:
+            curr_leftmost_x = np.min(non_black_pixels[1])
+            
+        if len(prev_warped_frame) > 0:
+            # Calculate the x_movement in canvas space
+            x_movement = abs(curr_leftmost_x - prev_leftmost_x)
+
+            # Create a mask with the same size as the canvas
+            mask = (prev_warped_frame.sum(axis=2) > 0).astype(np.uint8)
+
+            # Keep only the first x_movement columns in the mask
+            mask[:, prev_leftmost_x+x_movement+1:] = 0
+
+            # Apply the mask to the canvas
+            canvas[mask == 1] = prev_warped_frame[mask == 1]
+
+        # Update the previous leftmost x-coordinate
+        prev_leftmost_x = curr_leftmost_x
+        prev_warped_frame = warped_frame
 
     return canvas
+
 
 def main(video_path):
     frames = extract_frames(video_path)

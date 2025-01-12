@@ -18,7 +18,7 @@ def stabilize_horizontal_motion(matrix):
     return matrix
 
 
-def align_images(image1, image2, isHomography = False):
+def align_images(image1, image2):
     """
     Aligns image2 to image1 using the Lucas-Kanade optical flow method.
     
@@ -35,20 +35,16 @@ def align_images(image1, image2, isHomography = False):
     gray2 = cv2.cvtColor(image2, cv2.COLOR_BGR2GRAY)
     
     # Detect good features to track in image1
-    feature_params = dict(maxCorners=500, qualityLevel=0.01, minDistance=7, blockSize=7)
+    feature_params = dict(maxCorners=500, qualityLevel=0.01, minDistance=7, blockSize=32)
     points1 = cv2.goodFeaturesToTrack(gray1, mask=None, **feature_params)
     
     # Calculate optical flow (Lucas-Kanade) to find corresponding points in image2
-    lk_params = dict(winSize=(5, 5), maxLevel=2, criteria=(cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, 10, 0.03))
+    lk_params = dict(winSize=(10, 10), maxLevel=2, criteria=(cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, 10, 0.03))
     points2, st, err = cv2.calcOpticalFlowPyrLK(gray1, gray2, points1, None, **lk_params)
     
     # Select valid points
     points1_valid = points1[st == 1]
     points2_valid = points2[st == 1]
-    
-    if isHomography:
-        matrix, inliers = cv2.findHomography(points1_valid, points2_valid, cv2.RANSAC, 5.0)
-        return matrix
     
     # Estimate a transformation matrix (Affine or Homography)
     # For Affine transformation (3x2 matrix):
@@ -102,19 +98,15 @@ def calculate_transformations(frames):
     ref_index = num_frames // 2
     transformations = [np.eye(3)]  # Identity matrix for the first frame
 
-    # Reference transformation to stabilize rotations and Y translations
-    ref_rotation = 0
-    ref_y_translation = 0
-
     # Calculate right-side transformations
-    right_transform = transformations[0]
+    right_transform = np.eye(3)
     for i in range(ref_index + 1, num_frames):
         matrix = align_images(frames[i - 1], frames[i])
         right_transform = right_transform @ matrix
         transformations.append(right_transform)
 
     # Calculate left-side transformations
-    left_transform = transformations[0]
+    left_transform = np.eye(3)
     for i in range(ref_index - 1, -1, -1):
         matrix = align_images(frames[i + 1], frames[i])
         left_transform = matrix @ left_transform
@@ -139,10 +131,6 @@ def calculate_canvas_size(frames, transformations, ref_index):
         max_y = max(max_y, transformed_corners[:, 1].max())
 
     return int(max_x - min_x), int(max_y - min_y), -int(min_x), -int(min_y)
-
-import numpy as np
-import cv2
-from math import floor, ceil
 
 def stitch_panorama(frames, transformations, canvas_size, frame_x_offset=0):
     """Stitches frames into a panoramic mosaic."""
@@ -170,15 +158,14 @@ def stitch_panorama(frames, transformations, canvas_size, frame_x_offset=0):
             curr_leftmost_x = np.min(non_black_pixels[1])
             
         if len(prev_warped_frame) > 0:
-            # Calculate the x_movement in canvas space
-            x_movement = abs(curr_leftmost_x - prev_leftmost_x)
-
             # Create a mask with the same size as the canvas
             mask = (prev_warped_frame.sum(axis=2) > 0).astype(np.uint8)
 
             # Keep only the first x_movement columns in the mask
-            mask[:, prev_leftmost_x+x_movement+1:] = 0
-
+            # Keep only the columns between prev_leftmost_x and curr_leftmost_x
+            mask[:, :prev_leftmost_x+frame_x_offset] = 0  # Zero out columns before prev_leftmost_x
+            mask[:, curr_leftmost_x+frame_x_offset:] = 0  # Zero out columns after curr_leftmost_x
+            
             # Apply the mask to the canvas
             canvas[mask == 1] = prev_warped_frame[mask == 1]
 

@@ -2,6 +2,8 @@ import cv2
 import numpy as np
 from concurrent.futures import ThreadPoolExecutor
 import os
+from multiprocessing import Process
+
 
 def stabilize_horizontal_motion(matrix):
     # zero rotation components
@@ -202,8 +204,19 @@ def images_to_video(images, output_path, fps=30):
     print(f"Video saved at {output_path}")
 
 if __name__ == "__main__":
-    # iterate over all videos in the input directory
+    processes = []
+    
+    # Iterate over all videos in the input directory
     for video in os.listdir("input"):
         if video.endswith(".mp4"):
-            generate_mosaic_video(f"input/{video}", "my_output")
+            input_path = f"input/{video}"
+            output_path = "my_output"
+            
+            # Create a new process for each video
+            process = Process(target=generate_mosaic_video, args=(input_path, output_path))
+            processes.append(process)
+            process.start()
     
+    # Wait for all processes to finish
+    for process in processes:
+        process.join()

@@ -173,21 +173,15 @@ def trim_black_borders(image):
     return cropped_image
 
 
-def stitch_panorama(video_name, frames, transformations, canvas_size, frame_x_offset=0):
+def stitch_panorama(video_name, warped_frames, canvas_size, frame_x_offset=0):
     """takes columns from frames into a panoramic mosaic."""
     canvas = np.zeros((canvas_size[1], canvas_size[0], 3), dtype=np.uint8)
-    offset_x, offset_y = canvas_size[2], canvas_size[3]
+    
 
     prev_leftmost_x = 0
     prev_warped_frame = []
 
-    for i, frame in enumerate(frames):
-        transformation = np.linalg.inv(transformations[i])
-        transformation[0, 2] += offset_x
-        transformation[1, 2] += offset_y
-        
-        # Warp the frame to the canvas
-        warped_frame = cv2.warpPerspective(frame, transformation, (canvas.shape[1], canvas.shape[0]))
+    for i, warped_frame in enumerate(warped_frames):
 
         # Initialize curr_leftmost_x for the first frame
         curr_leftmost_x = 0
@@ -211,6 +205,8 @@ def stitch_panorama(video_name, frames, transformations, canvas_size, frame_x_of
 
         prev_leftmost_x = curr_leftmost_x
         prev_warped_frame = warped_frame
+    
+    logger.info('Stitched panorama for  offset %d for %s', frame_x_offset, video_name)
         
     return canvas
 
@@ -303,6 +299,16 @@ def generate_mosaic_video(video_path, output_dir, dynamic = False):
     canvas_size = calculate_canvas_size(frames, transformations, ref_index)
     logger.info('Calculated canvas size DONE for %s', video_name)
     
+    offset_x, offset_y = canvas_size[2], canvas_size[3]
+    def invert_transformation(matrix):
+        transformation = np.linalg.inv(matrix)
+        transformation[0, 2] += offset_x
+        transformation[1, 2] += offset_y
+        return transformation
+    transformations = [invert_transformation(matrix) for matrix in transformations]
+    
+    warped_frames = [cv2.warpPerspective(frames[i], transformations[i], (canvas_size[0], canvas_size[1])) for i in range(len(frames))]
+    
     # Stitch panorama
     target_frame_count = 30
     total_frames = len(frames)
@@ -310,13 +316,13 @@ def generate_mosaic_video(video_path, output_dir, dynamic = False):
     if not dynamic:
         step_size*=2
         
-    selected_indices = range(10, total_frames, step_size)[:target_frame_count]
+    selected_indices = range(10, total_frames, step_size)
     
     logger.info('Stitching panorama for %s', video_name)
     
-    with ThreadPoolExecutor() as executor:
+    with ThreadPoolExecutor(max_workers=6) as executor:
         panoramas = list(executor.map(
-            lambda i: stitch_panorama(video_name, frames, transformations, canvas_size, i),
+            lambda i: stitch_panorama(video_name, warped_frames, canvas_size, i),
             selected_indices
         ))
         

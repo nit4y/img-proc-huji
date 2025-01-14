@@ -13,7 +13,7 @@ def stabilize_horizontal_motion(matrix):
     return matrix
 
 
-def align_images(image1, image2):
+def align_images(image1, image2, calc_direction = False):
     """
     Aligns image2 to image1 using the Lucas-Kanade optical flow method.
     
@@ -47,7 +47,17 @@ def align_images(image1, image2):
     
     matrix =  to_homogeneous(matrix)
     
-    return stabilize_horizontal_motion(matrix)
+    direction = 'left' # default
+    if calc_direction:
+        motion_vectors = points2_valid - points1_valid
+        dx = motion_vectors[:, 0].mean()
+        dy = motion_vectors[:, 1].mean()
+        if abs(dx) > abs(dy):
+            direction = 'right' if dx > 0 else 'left'
+        else:
+            direction = 'down' if dy > 0 else 'up'
+
+    return stabilize_horizontal_motion(matrix), direction
 
 
 def to_homogeneous(affine_matrix):
@@ -75,14 +85,14 @@ def calculate_transformations(frames):
     # right-side transformations
     right_transform = np.eye(3)
     for i in range(ref_index + 1, num_frames):
-        matrix = align_images(frames[i - 1], frames[i])
+        matrix, _ = align_images(frames[i - 1], frames[i])
         right_transform = right_transform @ matrix
         transformations.append(right_transform)
 
     # left-side transformations
     left_transform = np.eye(3)
     for i in range(ref_index - 1, -1, -1):
-        matrix = align_images(frames[i + 1], frames[i])
+        matrix, _ = align_images(frames[i + 1], frames[i])
         left_transform = matrix @ left_transform
         transformations.insert(0, left_transform)
 
@@ -147,39 +157,6 @@ def stitch_panorama(frames, transformations, canvas_size, frame_x_offset=0):
         
     return canvas
 
-
-def generate_mosaic_video(video_path, output_dir):
-    
-    video_dir, video_name = os.path.split(video_path)
-    
-    frames = extract_frames(video_path)
-    transformations, ref_index = calculate_transformations(frames)
-    canvas_size = calculate_canvas_size(frames, transformations, ref_index)
-
-    target_frame_count = 30
-    total_frames = len(frames)
-
-    # Calculate the step size to evenly distribute 30 frames
-    step_size = max(total_frames // target_frame_count * 2, 1)
-
-    # Select frame indices to process
-    # 10 is minimum to avoid black columns in the beginning
-    selected_indices = range(10, total_frames, step_size)[:target_frame_count]
-
-    with ThreadPoolExecutor() as executor:
-        panoramas = list(executor.map(
-            lambda i: stitch_panorama(frames, transformations, canvas_size, i),
-            selected_indices
-        ))
-        
-    panoramas_reverse = panoramas[::-1]
-
-    # Combine forward and reverse panoramas
-    final_panoramas = panoramas + panoramas_reverse
-
-    # Create an MP4 video from the panoramas
-    images_to_video(final_panoramas, f"{output_dir}/{video_name}", fps=30)
-
 def images_to_video(images, output_path, fps=30):
     """
     Converts a list of images to an MP4 video.
@@ -203,20 +180,85 @@ def images_to_video(images, output_path, fps=30):
     out.release()
     print(f"Video saved at {output_path}")
 
+def rotate_frame(frame, direction):
+    """Rotates the frame based on the detected direction."""
+    if direction == 'right':
+        return cv2.rotate(frame, cv2.ROTATE_90_COUNTERCLOCKWISE)
+    elif direction == 'left':
+        return frame  # No rotation needed
+    elif direction == 'up':
+        return cv2.rotate(frame, cv2.ROTATE_180)
+    elif direction == 'down':
+        return cv2.rotate(frame, cv2.ROTATE_90_CLOCKWISE)
+
+def rotate_frame_back(frame, direction):
+    """Rotates the frame back to its original orientation."""
+    if direction == 'right':
+        return cv2.rotate(frame, cv2.ROTATE_90_CLOCKWISE)
+    elif direction == 'left':
+        return frame  # No rotation needed
+    elif direction == 'up':
+        return cv2.rotate(frame, cv2.ROTATE_180)
+    elif direction == 'down':
+        return cv2.rotate(frame, cv2.ROTATE_90_COUNTERCLOCKWISE)
+
+def detect_motion_direction(frames):
+    return align_images(frames[0], frames[1], calc_direction=True)[1]
+
+def generate_mosaic_video(video_path, output_dir):
+    
+    video_dir, video_name = os.path.split(video_path)
+
+    # Extract frames from the video
+    frames = extract_frames(video_path)
+
+    # Detect predominant motion direction
+    motion_direction = detect_motion_direction(frames)
+    print(f"Detected motion direction for {video_name}: {motion_direction}")
+
+    # Rotate frames to make the motion rightward
+    frames = [rotate_frame(frame, motion_direction) for frame in frames]
+
+    # Calculate transformations and stitch panorama
+    transformations, ref_index = calculate_transformations(frames)
+    canvas_size = calculate_canvas_size(frames, transformations, ref_index)
+
+    # Stitch panorama
+    target_frame_count = 30
+    total_frames = len(frames)
+    step_size = max(total_frames // target_frame_count * 2, 1)
+    selected_indices = range(10, total_frames, step_size)[:target_frame_count]
+
+    with ThreadPoolExecutor() as executor:
+        panoramas = list(executor.map(
+            lambda i: stitch_panorama(frames, transformations, canvas_size, i),
+            selected_indices
+        ))
+
+    panoramas_reverse = panoramas[::-1]
+    final_panoramas = panoramas + panoramas_reverse
+
+    # Rotate the final panoramas back to their original orientation
+    final_panoramas = [rotate_frame_back(panorama, motion_direction) for panorama in final_panoramas]
+
+    # Save the final video
+    images_to_video(final_panoramas, f"{output_dir}/{video_name}", fps=target_frame_count)
+
+
 if __name__ == "__main__":
     processes = []
-    
+
     # Iterate over all videos in the input directory
     for video in os.listdir("input"):
         if video.endswith(".mp4"):
             input_path = f"input/{video}"
             output_path = "my_output"
-            
+
             # Create a new process for each video
             process = Process(target=generate_mosaic_video, args=(input_path, output_path))
             processes.append(process)
             process.start()
-    
+
     # Wait for all processes to finish
     for process in processes:
         process.join()
